@@ -11,6 +11,9 @@ from .config import Settings
 
 settings = Settings()
 
+# https://youtu.be/P6NwZVl8ttc
+# ~18:45
+
 
 class MLP(pl.LightningModule):
     def __init__(self):
