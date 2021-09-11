@@ -1,3 +1,3 @@
-import tune
+from . import tune
 
 tune.main()

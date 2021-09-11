@@ -1,38 +1,67 @@
-import os
-
 import pytorch_lightning as pl
 import torch
 from torch import nn
 from torch.utils.data import DataLoader
+from torch.utils.data.dataset import random_split
 from torchvision import transforms
-from torchvision.datasets import CIFAR10
+from torchvision.datasets import MNIST
 
 from .config import Settings
 
 settings = Settings()
 
-# https://youtu.be/P6NwZVl8ttc
-# ~18:45
-
 
 class MLP(pl.LightningModule):
-    def __init__(self):
+    def __init__(self, trial):
         super().__init__()
-        self.layers = build_mlp_network()
-        self.ce = nn.CrossEntropyLoss()
 
-    def build_mlp_network(no_of_layers, no_hidden_units):
+        # Initialise Optuna hyperparameter search space
+        self.trial = trial
+        self.lr = self.trial.suggest_loguniform(
+            "learning rate",
+            settings.LEARNING_RATE_MIN,
+            settings.LEARNING_RATE_MAX,
+        )
+        self.dropout_prob = self.trial.suggest_float(
+            "dropout_prob",
+            settings.DROPOUT_RATE_MIN,
+            settings.DROPOUT_RATE_MAX,
+        )
+        self.no_of_layers = self.trial.suggest_int(
+            "no_of_layers",
+            settings.NO_OF_LAYERS_MIN,
+            settings.NO_OF_LAYERS_MAX,
+        )
 
+        # Preprocessing to be used by lightning data loaders
+        self.transform = self.preprocess_mnist()
+
+        # Build the network
+        self.loss = nn.CrossEntropyLoss()
+        self.layers = self.build_mlp_network()
+
+    def build_mlp_network(self):
         layers = []
 
-        for i in range(no_of_layers):
-            out_features = trial.suggest_int()
+        input_len = settings.INPUT_LEN
 
-            layers.append(nn.Linear(64, 32))
+        for i in range(self.no_of_layers):
+            no_of_units = self.trial.suggest_int(
+                f"no_of_units_l{i}",
+                settings.HIDDEN_UNITS_MIN,
+                settings.HIDDEN_UNITS_MAX,
+            )
+
+            layers.append(nn.Linear(input_len, no_of_units))
             layers.append(nn.ReLU())
 
-            dropout_prob = trial.suggest_float()
-            layers.append(nn.Dropout(p))
+            layers.append(nn.Dropout(self.dropout_prob))
+
+            input_len = no_of_units  # Set input size of next layer
+
+        # Make a prediction
+        layers.append(nn.Linear(input_len, settings.NO_OF_CLASSES))
+        layers.append(nn.LogSoftmax(dim=1))
 
         return nn.Sequential(*layers)
 
@@ -41,22 +70,77 @@ class MLP(pl.LightningModule):
 
     def training_step(self, batch, batch_idx):
         x, y = batch
-        x = x.view(x.size(0), -1)
+        x = x.reshape(settings.BATCH_SIZE, -1)  # Unrow image
         y_hat = self.layers(x)
-        loss = self.ce(y_hat, y)
+        loss = self.loss(y_hat, y)
         self.log("train_loss", loss)
         return loss
 
     def configure_optimizers(self):
-        optimizer = torch.optim.Adam(self.parameters(), lr=1e-4)
+        optimizer = torch.optim.Adam(self.parameters(), lr=self.lr)
         return optimizer
 
+    @staticmethod
+    def preprocess_mnist() -> transforms.Compose:
+        return transforms.Compose(
+            [
+                transforms.ToTensor(),
+                transforms.Normalize((0.1307,), (0.3081,)),
+            ]
+        )
 
-if __name__ == "__main__":
-    dataset = CIFAR10(os.getcwd(), download=True, transform=transforms.ToTensor())
-    pl.seed_everything(42)
-    mlp = MLP()
-    trainer = pl.Trainer(
-        auto_scale_batch_size="power", gpus=0, deterministic=True, max_epochs=5
-    )
-    trainer.fit(mlp, DataLoader(dataset))
+    def prepare_data(self):
+        # Download only
+        MNIST(
+            settings.DATA_DIR,
+            train=True,
+            download=True,
+            transform=transforms.ToTensor(),
+        )
+        MNIST(
+            settings.DATA_DIR,
+            train=False,
+            download=True,
+            transform=transforms.ToTensor(),
+        )
+
+    def setup(self, stage=None):
+        # Transform the dataset
+        mnist_train = MNIST(
+            settings.DATA_DIR,
+            train=True,
+            download=False,
+            transform=self.transform,
+        )
+        mnist_test = MNIST(
+            settings.DATA_DIR,
+            train=False,
+            download=False,
+            transform=self.transform,
+        )
+
+        # Train/val split
+        mnist_train, mnist_val = random_split(mnist_train, [50_000, 10_000])
+
+        # Assign to use in DataLoaders
+        self.train_dataset = mnist_train
+        self.val_dataset = mnist_val
+        self.test_dataset = mnist_test
+
+    def train_dataloader(self):
+        return DataLoader(
+            self.train_dataset,
+            batch_size=settings.BATCH_SIZE,
+        )
+
+    def val_dataloader(self):
+        return DataLoader(
+            self.val_dataset,
+            batch_size=settings.BATCH_SIZE,
+        )
+
+    def test_dataloader(self):
+        return DataLoader(
+            self.test_dataset,
+            batch_size=settings.BATCH_SIZE,
+        )
