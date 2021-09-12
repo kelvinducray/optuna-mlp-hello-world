@@ -15,7 +15,20 @@ def fit_trial(trial):
     trainer = pl.Trainer(max_epochs=3)
     trainer.fit(mlp)
 
+    return trainer.callback_metrics["val_acc"].item()
+
 
 def main():
-    study = optuna.create_study()
+    study = optuna.create_study(direction="maximize")
     study.optimize(fit_trial, n_trials=10)
+
+    print("Number of finished trials: {}".format(len(study.trials)))
+
+    print("Best trial:")
+    trial = study.best_trial
+
+    print("  Value: {}".format(trial.value))
+
+    print("  Params: ")
+    for key, value in trial.params.items():
+        print("    {}: {}".format(key, value))

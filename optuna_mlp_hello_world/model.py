@@ -70,11 +70,23 @@ class MLP(pl.LightningModule):
 
     def training_step(self, batch, batch_idx):
         x, y = batch
-        x = x.reshape(settings.BATCH_SIZE, -1)  # Unrow image
+        x = x.reshape(x.size()[0], -1)  # Unrow image
         y_hat = self.layers(x)
+
         loss = self.loss(y_hat, y)
         self.log("train_loss", loss)
+
         return loss
+
+    def validation_step(self, batch, batch_idx) -> None:
+        data, target = batch
+        data = data.reshape(data.size()[0], -1)
+
+        output = self.layers(data)
+
+        pred = output.argmax(dim=1, keepdim=True)
+        accuracy = pred.eq(target.view_as(pred)).float().mean()
+        self.log("val_acc", accuracy)
 
     def configure_optimizers(self):
         optimizer = torch.optim.Adam(self.parameters(), lr=self.lr)
@@ -121,6 +133,12 @@ class MLP(pl.LightningModule):
 
         # Train/val split
         mnist_train, mnist_val = random_split(mnist_train, [50_000, 10_000])
+
+        small_data_subset = True
+        if small_data_subset:
+            mnist_train, _ = random_split(mnist_train, [500, 49_500])
+            mnist_val, _ = random_split(mnist_val, [100, 9_900])
+            mnist_test, _ = random_split(mnist_test, [100, 9_900])
 
         # Assign to use in DataLoaders
         self.train_dataset = mnist_train
