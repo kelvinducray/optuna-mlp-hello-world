@@ -1,18 +1,29 @@
-import pytorch_lightning as pl
-import torch
-from torch import nn
+from typing import Optional
+
+from pytorch_lightning import LightningModule
+from torch import Tensor
+from torch.nn import (
+    CrossEntropyLoss,
+    Dropout,
+    Linear,
+    LogSoftmax,
+    Module,
+    ReLU,
+    Sequential,
+)
+from torch.optim import Adam, Optimizer
 from torch.utils.data import DataLoader
 from torch.utils.data.dataset import random_split
-from torchvision import transforms
 from torchvision.datasets import MNIST
+from torchvision.transforms import Compose, Normalize, ToTensor
 
 from .config import Settings
 
 settings = Settings()
 
 
-class MLP(pl.LightningModule):
-    def __init__(self, trial):
+class MLP(LightningModule):
+    def __init__(self, trial) -> None:
         super().__init__()
 
         # Initialise Optuna hyperparameter search space
@@ -37,11 +48,11 @@ class MLP(pl.LightningModule):
         self.transform = self.preprocess_mnist()
 
         # Build the network
-        self.loss = nn.CrossEntropyLoss()
+        self.loss = CrossEntropyLoss()
         self.layers = self.build_mlp_network()
 
-    def build_mlp_network(self):
-        layers = []
+    def build_mlp_network(self) -> Sequential:
+        layers: list[Module] = []
 
         input_len = settings.INPUT_LEN
 
@@ -52,33 +63,41 @@ class MLP(pl.LightningModule):
                 settings.HIDDEN_UNITS_MAX,
             )
 
-            layers.append(nn.Linear(input_len, no_of_units))
-            layers.append(nn.ReLU())
-
-            layers.append(nn.Dropout(self.dropout_prob))
+            layers.extend(
+                [
+                    Linear(input_len, no_of_units),
+                    ReLU(),
+                    Dropout(self.dropout_prob),
+                ],
+            )
 
             input_len = no_of_units  # Set input size of next layer
 
         # Make a prediction
-        layers.append(nn.Linear(input_len, settings.NO_OF_CLASSES))
-        layers.append(nn.LogSoftmax(dim=1))
+        layers.extend(
+            [
+                Linear(input_len, settings.NO_OF_CLASSES),
+                LogSoftmax(dim=1),
+            ],
+        )
 
-        return nn.Sequential(*layers)
+        return Sequential(*layers)
 
-    def forward(self, x):
+    def forward(self, x: Tensor) -> Tensor:
         return self.layers(x)
 
-    def training_step(self, batch, batch_idx):
+    def training_step(self, batch: Tensor, batch_idx: int) -> float:
         x, y = batch
         x = x.reshape(x.size()[0], -1)  # Unrow image
         y_hat = self.layers(x)
 
         loss = self.loss(y_hat, y)
-        self.log("train_loss", loss)
+
+        self.log("train_loss", loss, prog_bar=True)
 
         return loss
 
-    def validation_step(self, batch, batch_idx) -> None:
+    def validation_step(self, batch: Tensor, batch_idx: int) -> None:
         data, target = batch
         data = data.reshape(data.size()[0], -1)
 
@@ -86,37 +105,40 @@ class MLP(pl.LightningModule):
 
         pred = output.argmax(dim=1, keepdim=True)
         accuracy = pred.eq(target.view_as(pred)).float().mean()
-        self.log("val_acc", accuracy)
 
-    def configure_optimizers(self):
-        optimizer = torch.optim.Adam(self.parameters(), lr=self.lr)
+        self.log("val_acc", accuracy, prog_bar=True)
+
+        return accuracy
+
+    def configure_optimizers(self) -> Optimizer:
+        optimizer = Adam(self.parameters(), lr=self.lr)
         return optimizer
 
     @staticmethod
-    def preprocess_mnist() -> transforms.Compose:
-        return transforms.Compose(
+    def preprocess_mnist() -> Compose:
+        return Compose(
             [
-                transforms.ToTensor(),
-                transforms.Normalize((0.1307,), (0.3081,)),
+                ToTensor(),
+                Normalize((0.1307,), (0.3081,)),
             ]
         )
 
-    def prepare_data(self):
+    def prepare_data(self) -> None:
         # Download only
         MNIST(
             settings.DATA_DIR,
             train=True,
             download=True,
-            transform=transforms.ToTensor(),
+            transform=ToTensor(),
         )
         MNIST(
             settings.DATA_DIR,
             train=False,
             download=True,
-            transform=transforms.ToTensor(),
+            transform=ToTensor(),
         )
 
-    def setup(self, stage=None):
+    def setup(self, stage: Optional[str] = None) -> None:
         # Transform the dataset
         mnist_train = MNIST(
             settings.DATA_DIR,
@@ -145,19 +167,19 @@ class MLP(pl.LightningModule):
         self.val_dataset = mnist_val
         self.test_dataset = mnist_test
 
-    def train_dataloader(self):
+    def train_dataloader(self) -> DataLoader:
         return DataLoader(
             self.train_dataset,
             batch_size=settings.BATCH_SIZE,
         )
 
-    def val_dataloader(self):
+    def val_dataloader(self) -> DataLoader:
         return DataLoader(
             self.val_dataset,
             batch_size=settings.BATCH_SIZE,
         )
 
-    def test_dataloader(self):
+    def test_dataloader(self) -> DataLoader:
         return DataLoader(
             self.test_dataset,
             batch_size=settings.BATCH_SIZE,

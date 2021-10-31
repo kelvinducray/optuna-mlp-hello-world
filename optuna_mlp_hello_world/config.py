@@ -8,7 +8,11 @@ class Settings(BaseSettings):
     INPUT_LEN: int = 28 ** 2  # Unrowed MNIST image
     NO_OF_CLASSES: int = 10
 
-    # Optuna hyperparameter search space
+    # Optuna
+    NO_OF_TRIALS: int = 10
+    MAX_EPOCHS_PER_TRIAL: int = 10
+
+    # Hyperparameter search space
     NO_OF_LAYERS_MIN: int = 1
     NO_OF_LAYERS_MAX: int = 10
 
